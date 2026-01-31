@@ -83,7 +83,7 @@ export const WalletProvider = ({ children }) => {
     } finally {
       setIsConnecting(false);
     }
-  }, []);
+  }, [getNetworkName]);
 
   // Disconnect wallet
   const disconnectWallet = () => {
@@ -153,7 +153,7 @@ export const WalletProvider = ({ children }) => {
     if (wasConnected && isMetaMaskInstalled()) {
       connectWallet();
     }
-  }, [connectWallet]);
+  }, [connectWallet, isMetaMaskInstalled]);
 
   useEffect(() => {
     const ethProvider = getMetaMaskProvider();
