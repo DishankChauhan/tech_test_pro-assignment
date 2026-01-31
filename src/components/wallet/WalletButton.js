@@ -11,7 +11,8 @@ function WalletButton() {
     isConnecting, 
     isConnected, 
     connectWallet, 
-    disconnectWallet 
+    disconnectWallet,
+    refreshNetwork
   } = useWallet();
   
   const [showModal, setShowModal] = useState(false);
@@ -119,6 +120,14 @@ function WalletButton() {
         >
           <i className="fa-solid fa-arrow-up-right-from-square me-2"></i>
           View on Explorer
+        </Dropdown.Item>
+        
+        <Dropdown.Item 
+          onClick={refreshNetwork}
+          className="dropdown-action"
+        >
+          <i className="fa-solid fa-refresh me-2"></i>
+          Refresh Network
         </Dropdown.Item>
         
         <Dropdown.Divider />

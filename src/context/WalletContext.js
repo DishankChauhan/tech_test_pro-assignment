@@ -11,14 +11,40 @@ export const useWallet = () => {
   return context;
 };
 
+// Common network names mapping
+const NETWORK_NAMES = {
+  // Mainnets
+  '0x1': 'Ethereum',
+  '0xe708': 'Linea',
+  '0x2105': 'Base',
+  '0xa4b1': 'Arbitrum',
+  '0x38': 'BNB Chain',
+  '0xa': 'OP',
+  '0x89': 'Polygon',
+  '0x144': 'zkSync Era',
+  '0x531': 'Sei',
+  
+  // Testnets
+  '0xaa36a7': 'Sepolia',
+  '0xe705': 'Linea Sepolia',
+  '0x279f': 'Monad Testnet',
+  '0x18c1': 'MegaETH Testnet',
+};
+
+const getNetworkName = (chainId) => {
+  if (!chainId) return 'Unknown';
+  return NETWORK_NAMES[chainId.toLowerCase()] || `Chain ${parseInt(chainId, 16)}`;
+};
+
 export const WalletProvider = ({ children }) => {
   const [account, setAccount] = useState(null);
   const [provider, setProvider] = useState(null);
-  const [network, setNetwork] = useState(null);
+  const [chainId, setChainId] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState(null);
 
-  const getMetaMaskProvider = () => {
+  // Get MetaMask provider
+  const getMetaMaskProvider = useCallback(() => {
     if (typeof window === 'undefined') return null;
     const { ethereum } = window;
     if (!ethereum) return null;
@@ -26,26 +52,46 @@ export const WalletProvider = ({ children }) => {
       return ethereum.providers.find((p) => p.isMetaMask) || null;
     }
     return ethereum.isMetaMask ? ethereum : null;
-  };
+  }, []);
 
-  const isMetaMaskInstalled = () => !!getMetaMaskProvider();
+  const isMetaMaskInstalled = useCallback(() => !!getMetaMaskProvider(), [getMetaMaskProvider]);
 
-  const getNetworkName = (chainId) => {
-    const networks = {
-      '0x1': 'Ethereum Mainnet',
-      '0xaa36a7': 'Sepolia',
-      '0x5': 'Goerli',
-      '0x89': 'Polygon',
-      '0x13881': 'Mumbai',
-      '0xa4b1': 'Arbitrum',
-      '0xa': 'Optimism',
-    };
-    return networks[chainId] || `Unknown (${chainId})`;
-  };
+  // Update provider instance
+  const updateProvider = useCallback(() => {
+    const ethProvider = getMetaMaskProvider();
+    if (ethProvider) {
+      setProvider(new BrowserProvider(ethProvider));
+    }
+  }, [getMetaMaskProvider]);
 
+  // Handle account changes from MetaMask
+  const handleAccountsChanged = useCallback((accounts) => {
+    if (accounts.length === 0) {
+      // User disconnected
+      setAccount(null);
+      setProvider(null);
+      setChainId(null);
+      localStorage.removeItem('walletConnected');
+    } else {
+      setAccount(accounts[0]);
+      localStorage.setItem('walletConnected', 'true');
+      updateProvider();
+    }
+  }, [updateProvider]);
+
+  // Handle chain/network changes from MetaMask
+  const handleChainChanged = useCallback((newChainId) => {
+    console.log('Network changed to:', newChainId, getNetworkName(newChainId));
+    setChainId(newChainId);
+    updateProvider();
+  }, [updateProvider]);
+
+  // Connect wallet
   const connectWallet = useCallback(async () => {
-    if (!isMetaMaskInstalled()) {
-      setError('MetaMask not detected. Install MetaMask to continue.');
+    const ethProvider = getMetaMaskProvider();
+    
+    if (!ethProvider) {
+      setError('MetaMask not detected. Please install MetaMask.');
       return;
     }
 
@@ -53,101 +99,81 @@ export const WalletProvider = ({ children }) => {
     setError(null);
 
     try {
-      const ethProvider = getMetaMaskProvider();
-      if (!ethProvider) {
-        setError('MetaMask not found');
-        setIsConnecting(false);
-        return;
-      }
-
-      const provider = new BrowserProvider(ethProvider);
-      const accounts = await provider.send('eth_requestAccounts', []);
-      const network = await provider.getNetwork();
+      // Request accounts
+      const accounts = await ethProvider.request({ method: 'eth_requestAccounts' });
       
-      setProvider(provider);
+      // Get current chain
+      const currentChainId = await ethProvider.request({ method: 'eth_chainId' });
+      
       setAccount(accounts[0]);
-      const chainId = '0x' + network.chainId.toString(16);
-      setNetwork({
-        chainId,
-        name: getNetworkName(chainId)
-      });
-
+      setChainId(currentChainId);
+      setProvider(new BrowserProvider(ethProvider));
       localStorage.setItem('walletConnected', 'true');
-      localStorage.setItem('walletAccount', accounts[0]);
     } catch (err) {
       if (err.code === 4001) {
-        setError('Connection cancelled');
+        setError('Connection rejected by user');
       } else {
-        setError('Connection failed');
+        setError('Failed to connect wallet');
+        console.error('Connect error:', err);
       }
     } finally {
       setIsConnecting(false);
     }
-  }, [getNetworkName]);
+  }, [getMetaMaskProvider]);
 
   // Disconnect wallet
-  const disconnectWallet = () => {
+  const disconnectWallet = useCallback(() => {
     setAccount(null);
-    setProvider(null); 
-    setNetwork(null);
+    setProvider(null);
+    setChainId(null);
     setError(null);
     localStorage.removeItem('walletConnected');
-    localStorage.removeItem('walletAccount');  
-  };
+  }, []);
 
-  const handleAccountsChanged = useCallback(async (accounts) => {
-    if (accounts.length === 0) {
-      disconnectWallet();
-      return;
+  // Switch network
+  const switchNetwork = useCallback(async (targetChainId) => {
+    const ethProvider = getMetaMaskProvider();
+    if (!ethProvider) {
+      setError('MetaMask not found');
+      return false;
     }
 
-    setAccount(accounts[0]);
-    localStorage.setItem('walletAccount', accounts[0]);
-
     try {
-      const ethProvider = getMetaMaskProvider();
-      if (!ethProvider) {
-        disconnectWallet();
-        return;
-      }
-
-      const provider = new BrowserProvider(ethProvider);
-      setProvider(provider);
-
-      const network = await provider.getNetwork();
-      const chainId = '0x' + network.chainId.toString(16);
-      setNetwork({
-        chainId,
-        name: getNetworkName(chainId)
+      await ethProvider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: targetChainId }],
       });
+      return true;
     } catch (err) {
-      console.error('Account change error:', err);
-    }
-  }, []);
-
-  const handleChainChanged = useCallback(async (chainId) => {
-    setNetwork({ chainId, name: getNetworkName(chainId) });
-
-    try {
-      const ethProvider = getMetaMaskProvider();
-      if (!ethProvider) {
-        disconnectWallet();
-        return;
+      if (err.code === 4902) {
+        setError('Network not added to MetaMask');
+      } else if (err.code === 4001) {
+        setError('Network switch rejected');
+      } else {
+        setError('Failed to switch network');
       }
-
-      const provider = new BrowserProvider(ethProvider);
-      setProvider(provider);
-
-      const accounts = await provider.send('eth_accounts', []);
-      if (accounts?.[0]) {
-        setAccount(accounts[0]);
-        localStorage.setItem('walletAccount', accounts[0]);
-      }
-    } catch (err) {
-      console.error('Network change error:', err);
+      return false;
     }
-  }, []);
+  }, [getMetaMaskProvider]);
 
+  // Setup event listeners for MetaMask
+  useEffect(() => {
+    const ethProvider = getMetaMaskProvider();
+    if (!ethProvider) return;
+
+    // Listen for account changes
+    ethProvider.on('accountsChanged', handleAccountsChanged);
+    
+    // Listen for network/chain changes
+    ethProvider.on('chainChanged', handleChainChanged);
+
+    return () => {
+      ethProvider.removeListener('accountsChanged', handleAccountsChanged);
+      ethProvider.removeListener('chainChanged', handleChainChanged);
+    };
+  }, [getMetaMaskProvider, handleAccountsChanged, handleChainChanged]);
+
+  // Auto-reconnect on page load if previously connected
   useEffect(() => {
     const wasConnected = localStorage.getItem('walletConnected');
     if (wasConnected && isMetaMaskInstalled()) {
@@ -155,29 +181,29 @@ export const WalletProvider = ({ children }) => {
     }
   }, [connectWallet, isMetaMaskInstalled]);
 
-  useEffect(() => {
-    const ethProvider = getMetaMaskProvider();
-    if (!ethProvider) return;
-
-    ethProvider.on('accountsChanged', handleAccountsChanged);
-    ethProvider.on('chainChanged', handleChainChanged);
-
-    return () => {
-      ethProvider.removeListener?.('accountsChanged', handleAccountsChanged);
-      ethProvider.removeListener?.('chainChanged', handleChainChanged);
-    };
-  }, [handleAccountsChanged, handleChainChanged]);
+  // Derive network info from chainId
+  const network = chainId ? {
+    chainId,
+    name: getNetworkName(chainId),
+    chainIdNumber: parseInt(chainId, 16),
+  } : null;
 
   const value = {
+    // State
     account,
     provider,
+    chainId,
     network,
     isConnecting,
     error,
     isConnected: !!account,
     isMetaMaskInstalled: isMetaMaskInstalled(),
+    
+    // Actions
     connectWallet,
     disconnectWallet,
+    switchNetwork,
+    clearError: () => setError(null),
   };
 
   return (
